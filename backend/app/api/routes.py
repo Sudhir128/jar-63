@@ -91,6 +91,7 @@ async def health(app_request: Request) -> HealthResponse:
 
     return HealthResponse(status="ok", version=__version__, components=components)
 
+
 @router.get("/version", response_model=VersionResponse)
 async def version() -> VersionResponse:
     """Return application version metadata."""

@@ -13,8 +13,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from app.config.agent_settings import AgentSettings
 from app.config.app_settings import AppEnv, AppSettings
 from app.config.database_settings import DatabaseSettings
 from app.config.llm_settings import LLMSettings
@@ -24,6 +25,7 @@ from app.config.redis_settings import RedisSettings
 from app.config.security_settings import SecuritySettings
 
 __all__ = [
+    "AgentSettings",
     "AppEnv",
     "AppSettings",
     "DatabaseSettings",
@@ -42,13 +44,14 @@ class Settings(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    app: AppSettings
-    database: DatabaseSettings
-    redis: RedisSettings
-    llm: LLMSettings
-    memory: MemorySettings
-    security: SecuritySettings
-    logging: LoggingSettings
+    app: AppSettings = Field(default_factory=AppSettings)
+    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    redis: RedisSettings = Field(default_factory=RedisSettings)
+    llm: LLMSettings = Field(default_factory=LLMSettings)
+    memory: MemorySettings = Field(default_factory=MemorySettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
+    logging: LoggingSettings = Field(default_factory=LoggingSettings)
+    agents: AgentSettings = Field(default_factory=AgentSettings)
 
     @property
     def is_testing(self) -> bool:
@@ -66,4 +69,5 @@ def get_settings() -> Settings:
         memory=MemorySettings(),
         security=SecuritySettings(),
         logging=LoggingSettings(),
+        agents=AgentSettings(),
     )

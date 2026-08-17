@@ -48,7 +48,9 @@ class MemorySettings(BaseSettings):
     chars_per_token_approx: int = Field(default=4, alias="MEMORY_CHARS_PER_TOKEN")
 
     # --- Retention ---
-    conversation_retention_hours: int = Field(default=48, alias="MEMORY_CONVERSATION_RETENTION_HOURS")
+    conversation_retention_hours: int = Field(
+        default=48, alias="MEMORY_CONVERSATION_RETENTION_HOURS"
+    )
     task_retention_hours: int = Field(default=168, alias="MEMORY_TASK_RETENTION_HOURS")
     # PREFERENCE and SEMANTIC are long-lived (no expiry by default).
 
@@ -70,11 +72,12 @@ class MemorySettings(BaseSettings):
     allow_sensitive_storage: bool = Field(default=False, alias="MEMORY_ALLOW_SENSITIVE")
 
     # --- Duplicate detection ---
-    duplicate_similarity_threshold: float = Field(
-        default=0.85, alias="MEMORY_DUPLICATE_THRESHOLD"
-    )
+    duplicate_similarity_threshold: float = Field(default=0.85, alias="MEMORY_DUPLICATE_THRESHOLD")
 
     model_config = SettingsConfigDict(
-        env_file=".env", env_prefix="MEMORY_", extra="ignore", frozen=True,
+        env_file=".env",
+        env_prefix="MEMORY_",
+        extra="ignore",
+        frozen=True,
         populate_by_name=True,
     )

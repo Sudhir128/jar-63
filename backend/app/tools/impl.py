@@ -29,6 +29,7 @@ from app.tools.interface import (
 )
 
 __all__ = [
+    "SearchTool",
     "CalculatorTool",
     "TimeTool",
     "HealthTool",
@@ -299,6 +300,113 @@ class EchoTool(ToolInterface):
             name=self.name,
             success=True,
             output=dict(context.arguments),
+        )
+
+
+# ---------------------------------------------------------------------------
+# SearchTool (Phase 7 research boundary)
+# ---------------------------------------------------------------------------
+
+
+class SearchTool(ToolInterface):
+    """Deterministic search tool — the Phase 7 research boundary.
+
+    This is a *clean tool boundary* for the ResearchAgent. It does NOT perform
+    unrestricted browser/shell/network crawling. It accepts a query and an
+    optional results source (a callable returning a list of deterministic
+    hits). When no source is provided it returns an empty result set — the
+    ResearchAgent then reports that no sources were available, rather than
+    fabricating results.
+
+    The tool is LOW risk and registered through the :class:`ToolRegistry`,
+    executed through the :class:`ToolExecutor` (policy enforced). It is the
+    only search surface the ResearchAgent may use.
+    """
+
+    def __init__(
+        self,
+        *,
+        results_source: Any | None = None,
+    ) -> None:
+        self._results_source = results_source
+        self._info = ToolInfo(
+            tool_id="search",
+            name="search",
+            description=(
+                "Deterministic search boundary for research agents. Returns "
+                "structured results without unrestricted browser/shell access."
+            ),
+            category=ToolCategory.SEARCH,
+            risk_level=RiskLevel.LOW,
+            requires_network=False,
+            requires_confirmation=False,
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results.",
+                        "default": 5,
+                    },
+                },
+                "required": ["query"],
+            },
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "results": {"type": "array"},
+                    "count": {"type": "integer"},
+                    "query": {"type": "string"},
+                },
+            },
+            capabilities=["research", "search"],
+        )
+
+    @property
+    def info(self) -> ToolInfo:
+        return self._info
+
+    async def execute(self, context: ToolContext) -> ToolResult:
+        query = context.arguments.get("query")
+        if not isinstance(query, str) or not query.strip():
+            return ToolResult(
+                invocation_id=context.invocation_id,
+                tool_call_id=context.tool_call_id,
+                name=self.name,
+                success=False,
+                error="Argument 'query' must be a non-empty string.",
+            )
+        limit = context.arguments.get("limit", 5)
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 5
+        results: list[Any] = []
+        if self._results_source is not None:
+            try:
+                raw = self._results_source(query)
+                if hasattr(raw, "__await__"):
+                    raw = await raw  # type: ignore[func-returns-value]
+                if isinstance(raw, list):
+                    results = raw[:limit]
+            except Exception as exc:  # noqa: BLE001
+                return ToolResult(
+                    invocation_id=context.invocation_id,
+                    tool_call_id=context.tool_call_id,
+                    name=self.name,
+                    success=False,
+                    error=f"Search source error: {exc}",
+                )
+        return ToolResult(
+            invocation_id=context.invocation_id,
+            tool_call_id=context.tool_call_id,
+            name=self.name,
+            success=True,
+            output={"results": results, "count": len(results), "query": query},
         )
 
 

@@ -19,12 +19,10 @@ from typing import TYPE_CHECKING
 
 from app.core.logging import get_logger
 from app.runtime.loop.loop_context import LoopContext
-from app.runtime.loop.loop_state import StageStatus
-from app.runtime.loop.stages.base import LoopStage
 from app.runtime.loop.stages.discover import (
     DefaultDiscoverStage,
-    DiscoveryResult,
     DiscoverStage,
+    DiscoveryResult,
 )
 
 if TYPE_CHECKING:
@@ -59,14 +57,12 @@ class MemoryDiscoverStage(DiscoverStage):
         # Stash memory context on task metadata for the planner.
         context.task.metadata["memory_context"] = memory_context.model_dump(mode="json")
         # Record that memory was consulted (count only — no content).
-        context.task.metadata.setdefault("discovery_meta", {})[
-            "memory_count"
-        ] = len(memory_context.memories)
+        context.task.metadata.setdefault("discovery_meta", {})["memory_count"] = len(
+            memory_context.memories
+        )
         return base
 
-    async def _retrieve_memory(
-        self, context: LoopContext, base: DiscoveryResult
-    ) -> object:
+    async def _retrieve_memory(self, context: LoopContext, base: DiscoveryResult) -> object:
         """Retrieve a bounded memory context, or an empty one if unavailable."""
         from app.memory.models import MemoryContext
 
@@ -88,4 +84,6 @@ class MemoryDiscoverStage(DiscoverStage):
                 error=type(exc).__name__,
                 task_id=context.task_id,
             ).warning("Memory retrieval in discover failed (non-fatal): {}", str(exc))
-            return MemoryContext(query=base.goal, session_id=base.session_id, task_id=context.task_id)
+            return MemoryContext(
+                query=base.goal, session_id=base.session_id, task_id=context.task_id
+            )

@@ -199,9 +199,7 @@ async def run_confirmation_approval_demo() -> tuple[LoopResult, LoopResult]:
     """
     runner = MathLoopRunner()
     # Use a policy that requires confirmation for MEDIUM tools.
-    await runner.setup(
-        policy=DefaultToolPolicy(require_confirmation_for_medium=True)
-    )
+    await runner.setup(policy=DefaultToolPolicy(require_confirmation_for_medium=True))
     # Override: make calculator MEDIUM risk so confirmation is triggered.
     from app.tools.interface import RiskLevel
 
@@ -218,9 +216,7 @@ async def run_confirmation_approval_demo() -> tuple[LoopResult, LoopResult]:
     runner.confirmation_store.approve(confirm_id)
 
     # Resume the same loop.
-    resumed = await runner.controller.resume_after_confirmation(
-        runner.context, confirm_id
-    )
+    resumed = await runner.controller.resume_after_confirmation(runner.context, confirm_id)
     return paused, resumed
 
 
@@ -231,9 +227,7 @@ async def run_confirmation_rejection_demo() -> tuple[LoopResult, LoopResult]:
     have executed the tool — verification fails and the loop fails safely.
     """
     runner = MathLoopRunner()
-    await runner.setup(
-        policy=DefaultToolPolicy(require_confirmation_for_medium=True)
-    )
+    await runner.setup(policy=DefaultToolPolicy(require_confirmation_for_medium=True))
     from app.tools.interface import RiskLevel
 
     calc = runner.tool_registry.get("calculator")

@@ -54,9 +54,7 @@ def tools_to_definitions(tools: list[ToolInterface]) -> list[LLMToolDefinition]:
     return [tool_to_definition(t) for t in tools]
 
 
-def build_assistant_tool_call_message(
-    content: str, tool_calls: list[LLMToolCall]
-) -> LLMMessage:
+def build_assistant_tool_call_message(content: str, tool_calls: list[LLMToolCall]) -> LLMMessage:
     """Build the assistant message carrying tool calls for the conversation.
 
     This message is appended to the conversation history so the LLM knows

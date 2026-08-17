@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
+from app.api.agents import router as agents_router
 from app.api.llm import router as llm_router
 from app.api.memory import router as memory_router
 from app.api.routes import router as health_router
@@ -37,9 +38,11 @@ def create_app() -> FastAPI:
         logger.bind(event="app.startup", version=__version__).info(
             "Starting {} ({})", settings.app.name, settings.app.env.value
         )
+        # Register default tools before start() so the Phase 7 router/dispatcher
+        # see all tools (the agent orchestration is wired inside start()).
+        await register_default_tools(runtime.tool_registry)
         await runtime.start()
         await register_demo_agents(runtime.agent_registry, settings)
-        await register_default_tools(runtime.tool_registry)
         app.state.runtime = runtime
         try:
             yield
@@ -71,6 +74,7 @@ def create_app() -> FastAPI:
     app.include_router(tasks_router)
     app.include_router(llm_router)
     app.include_router(memory_router)
+    app.include_router(agents_router)
     return app
 
 

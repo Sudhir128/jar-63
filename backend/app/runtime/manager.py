@@ -17,8 +17,9 @@ gracefully.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.agents.registry import AgentRegistry
 from app.config import Settings, get_settings
@@ -82,6 +83,16 @@ class RuntimeManager:
     # Memory subsystem (Phase 6).
     memory_manager: MemoryManager | None = None
     memory_health: MemoryHealthChecker | None = None
+    # Agent orchestration subsystem (Phase 7).
+    agent_catalog: Any | None = None
+    agent_router: Any | None = None
+    agent_dispatcher: Any | None = None
+    dynamic_agent_builder: Any | None = None
+    agent_evaluator: Any | None = None
+    lifecycle_manager: Any | None = None
+    agent_orchestrator: Any | None = None
+    agent_execution_store: Any | None = None
+    agent_evaluation_store: Any | None = None
     settings: Settings = field(default_factory=get_settings)
     _state: RuntimeState = field(default_factory=RuntimeState)
 
@@ -133,6 +144,7 @@ class RuntimeManager:
         self._state.event_bus_ready = True
         self._state.agent_registry_ready = True
         self._state.tool_registry_ready = True
+        await self._build_agent_orchestration()
         self._state.started = True
         logger.bind(
             event="runtime.started",
@@ -218,6 +230,123 @@ class RuntimeManager:
                 "Memory manager start failed (non-fatal): {}", str(exc)
             )
 
+    async def _build_agent_orchestration(self) -> None:
+        """Build the Phase 7 agent orchestration subsystem (non-fatal).
+
+        Wires the catalog, router, dispatcher, dynamic builder, evaluator,
+        lifecycle manager, and orchestrator onto the runtime. Uses the
+        existing :class:`LoopService` for execution (never duplicates the loop
+        engine). All LLM-dependent paths fall back to deterministic behavior
+        when the LLM is unavailable. Construction never raises — if the
+        subsystem cannot start, the runtime continues without it.
+        """
+        if not self.settings.agents.enabled:
+            return
+        try:
+            from app.agents.catalog import AgentDefinitionRegistry
+            from app.agents.dispatcher import AgentDispatcher
+            from app.agents.dynamic_builder import DynamicAgentBuilder
+            from app.agents.evaluation import (
+                AgentEvaluator,
+                DeterministicEvaluator,
+                LLMEvaluator,
+            )
+            from app.agents.factory import default_definitions
+            from app.agents.lifecycle import LifecycleManager
+            from app.agents.orchestrator import AgentOrchestrator
+            from app.agents.router import AgentRouter
+            from app.agents.store import (
+                PostgreSQLAgentDefinitionStore,
+                PostgreSQLAgentEvaluationStore,
+                PostgreSQLAgentExecutionStore,
+                init_agent_tables,
+            )
+        except ImportError as exc:  # pragma: no cover - defensive
+            logger.bind(event="agent.wiring.import.error", error=type(exc).__name__).warning(
+                "Agent orchestration import failed (non-fatal): {}", str(exc)
+            )
+            return
+
+        cfg = self.settings.agents
+        # Persistence: PostgreSQL-backed stores; the async engine is
+        # sqlite+aiosqlite in testing (sqlite-aware session).
+        store = PostgreSQLAgentDefinitionStore()
+        self.agent_execution_store = PostgreSQLAgentExecutionStore()
+        self.agent_evaluation_store = PostgreSQLAgentEvaluationStore()
+        self.agent_catalog = AgentDefinitionRegistry(store, event_bus=self.event_bus)
+        # Create tables + seed built-in (non-dynamic) definitions (best-effort).
+        try:
+            await init_agent_tables()
+            for d in default_definitions():
+                await self.agent_catalog.upsert(d)
+        except Exception as exc:  # noqa: BLE001 - seeding is best-effort
+            logger.bind(event="agent.wiring.seed.error", error=type(exc).__name__).debug(
+                "Agent catalog seeding skipped (non-fatal): {}", str(exc)
+            )
+
+        llm_available = self.model_router is not None
+        self.agent_router = AgentRouter(
+            self.agent_catalog,
+            self.tool_registry,
+            event_bus=self.event_bus,
+            model_router=self.model_router,
+            execution_store=self.agent_execution_store,
+            llm_enabled=cfg.llm_routing and llm_available,
+        )
+        self.agent_dispatcher = AgentDispatcher(
+            self.agent_catalog,
+            self.agent_execution_store,
+            agent_registry=self.agent_registry,
+            loop_service=self.loop_service,  # type: ignore[arg-type]
+            memory_manager=self.memory_manager,
+            event_bus=self.event_bus,
+        )
+        if cfg.dynamic_agents_enabled:
+            self.dynamic_agent_builder = DynamicAgentBuilder(
+                self.agent_catalog,
+                self.tool_registry,
+                event_bus=self.event_bus,
+                model_router=self.model_router,
+                llm_enabled=cfg.llm_routing and llm_available,
+                max_dynamic_agents=cfg.max_dynamic_agents,
+                auto_activate_dynamic=cfg.auto_activate_dynamic,
+            )
+        strategy = (
+            LLMEvaluator(model_router=self.model_router)
+            if (cfg.llm_evaluation and llm_available)
+            else DeterministicEvaluator()
+        )
+        self.agent_evaluator = AgentEvaluator(
+            self.agent_execution_store,
+            self.agent_evaluation_store,
+            strategy=strategy,
+            event_bus=self.event_bus,
+            use_llm=cfg.llm_evaluation and llm_available,
+        )
+        self.lifecycle_manager = LifecycleManager(
+            self.agent_catalog,
+            self.agent_execution_store,
+            evaluator=self.agent_evaluator,
+            min_samples_for_retire=cfg.min_samples_for_retire,
+            recent_window=cfg.recent_window,
+        )
+        self.agent_orchestrator = AgentOrchestrator(
+            self.agent_router,
+            self.agent_dispatcher,
+            catalog=self.agent_catalog,
+            event_bus=self.event_bus,
+            dynamic_builder=self.dynamic_agent_builder,
+            evaluator=self.agent_evaluator if cfg.llm_evaluation else None,
+            lifecycle_manager=self.lifecycle_manager,
+            memory_manager=self.memory_manager if cfg.memory_aware else None,
+            allow_dynamic=cfg.dynamic_agents_enabled,
+        )
+        logger.bind(
+            event="agent.wiring.ready",
+            dynamic_agents=cfg.dynamic_agents_enabled,
+            llm_routing=self.agent_router is not None and cfg.llm_routing,
+        ).info("Agent orchestration subsystem ready")
+
     async def shutdown(self) -> None:
         """Tear down subsystems gracefully."""
         if not self._state.started:
@@ -230,10 +359,8 @@ class RuntimeManager:
         self._state.memory_ready = False
         # Stop the memory manager (non-fatal).
         if self.memory_manager is not None:
-            try:
+            with contextlib.suppress(Exception):  # noqa: BLE001
                 await self.memory_manager.shutdown()
-            except Exception:  # noqa: BLE001
-                pass
         # Close provider HTTP clients.
         for provider_id in list(self.provider_registry.list()):
             try:
@@ -263,15 +390,20 @@ class RuntimeManager:
 
 
 async def register_default_tools(registry: ToolRegistry) -> int:
-    """Register the Phase 3 foundation tools (calculator, time, health, echo).
+    """Register the Phase 3 foundation tools + the Phase 7 search boundary.
+
+    Foundation tools: calculator, time, health, echo (LOW risk).
+    Phase 7: search (LOW risk) — the ResearchAgent research boundary.
 
     Returns the number of tools registered. Tools already registered are
     skipped (collision-safe).
     """
     from app.core.exceptions import ToolAlreadyRegisteredError
+    from app.tools.impl import SearchTool
 
+    tools = [*DEFAULT_TOOLS(), SearchTool()]
     registered = 0
-    for tool in DEFAULT_TOOLS():
+    for tool in tools:
         try:
             await registry.register(tool)
             registered += 1

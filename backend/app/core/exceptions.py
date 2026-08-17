@@ -8,6 +8,12 @@ __all__ = [
     "AgentError",
     "AgentNotFoundError",
     "AgentAlreadyRegisteredError",
+    "AgentDefinitionError",
+    "AgentDefinitionNotFoundError",
+    "AgentDefinitionAlreadyExistsError",
+    "AgentDefinitionValidationError",
+    "AgentNotDispatchableError",
+    "AgentRoutingError",
     "ToolError",
     "ToolNotFoundError",
     "ToolAlreadyRegisteredError",
@@ -34,6 +40,30 @@ class AgentNotFoundError(AgentError):
 
 class AgentAlreadyRegisteredError(AgentError):
     """Raised when registering an agent whose id already exists."""
+
+
+class AgentDefinitionError(AgentError):
+    """Base class for persistent agent definition errors."""
+
+
+class AgentDefinitionNotFoundError(AgentDefinitionError):
+    """Raised when a requested agent definition is not in the catalog."""
+
+
+class AgentDefinitionAlreadyExistsError(AgentDefinitionError):
+    """Raised when registering a definition whose id already exists."""
+
+
+class AgentDefinitionValidationError(AgentDefinitionError):
+    """Raised when an agent definition/spec fails validation."""
+
+
+class AgentNotDispatchableError(AgentError):
+    """Raised when attempting to dispatch a non-active agent definition."""
+
+
+class AgentRoutingError(AgentError):
+    """Raised when agent routing cannot produce a decision."""
 
 
 class ToolError(JARError):

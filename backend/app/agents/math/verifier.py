@@ -48,23 +48,27 @@ class MathVerifier(Verifier):
             independent = _safe_eval(str(expression))
         except _CalcError as exc:
             return VerificationResult.failed_with(
-                [VerificationEvidence(
-                    check="independent_recompute",
-                    expected="computable expression",
-                    actual=str(exc),
-                    passed=False,
-                    detail="Expression could not be independently evaluated.",
-                )],
+                [
+                    VerificationEvidence(
+                        check="independent_recompute",
+                        expected="computable expression",
+                        actual=str(exc),
+                        passed=False,
+                        detail="Expression could not be independently evaluated.",
+                    )
+                ],
                 summary=f"Verification failed: {exc}",
             )
         except Exception as exc:  # noqa: BLE001
             return VerificationResult.failed_with(
-                [VerificationEvidence(
-                    check="independent_recompute",
-                    expected="computable expression",
-                    actual=str(exc),
-                    passed=False,
-                )],
+                [
+                    VerificationEvidence(
+                        check="independent_recompute",
+                        expected="computable expression",
+                        actual=str(exc),
+                        passed=False,
+                    )
+                ],
                 summary=f"Verification failed: {exc}",
             )
 

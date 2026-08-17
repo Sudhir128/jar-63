@@ -171,7 +171,7 @@ class ConfirmationStore:
 
     def list_pending(self) -> list[ConfirmationRequest]:
         # Lazily expire any pending requests whose TTL has elapsed.
-        for cid, req in list(self._requests.items()):
+        for _cid, req in list(self._requests.items()):
             if req.has_expired:
                 self._expire(req)
         return [r for r in self._requests.values() if r.is_pending]

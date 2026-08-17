@@ -90,6 +90,22 @@ class EventType(StrEnum):
     MEMORY_WRITE_REJECTED = "memory.write.rejected"
     MEMORY_CONSOLIDATED = "memory.consolidated"
 
+    # --- Agent orchestration events (Phase 7) ---
+    # No secrets, instructions, or memory content are ever placed in these
+    # events — only agent_id, version, lifecycle, routing metadata, and
+    # objective outcome facts (counts/status).
+    AGENT_SELECTED = "agent.selected"
+    AGENT_DISPATCH_STARTED = "agent.dispatch.started"
+    AGENT_DISPATCH_COMPLETED = "agent.dispatch.completed"
+    AGENT_DISPATCH_FAILED = "agent.dispatch.failed"
+    AGENT_CREATED = "agent.created"
+    AGENT_UPDATED = "agent.updated"
+    AGENT_DEPRECATED = "agent.deprecated"
+    AGENT_RETIRED = "agent.retired"
+    AGENT_EVALUATION_STARTED = "agent.evaluation.started"
+    AGENT_EVALUATION_COMPLETED = "agent.evaluation.completed"
+    AGENT_VERSION_CREATED = "agent.version.created"
+
 
 class BaseEvent(BaseModel):
     """Base model for all events.

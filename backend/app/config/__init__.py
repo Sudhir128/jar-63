@@ -1,6 +1,7 @@
 """Configuration package for JAR-63."""
 
 from app.config.settings import (
+    AgentSettings,
     AppEnv,
     AppSettings,
     DatabaseSettings,
@@ -14,6 +15,7 @@ from app.config.settings import (
 )
 
 __all__ = [
+    "AgentSettings",
     "AppEnv",
     "AppSettings",
     "DatabaseSettings",

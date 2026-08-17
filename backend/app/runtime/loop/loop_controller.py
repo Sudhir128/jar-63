@@ -143,8 +143,6 @@ class LoopController:
             return await self._finalize(LoopFinalStatus.FAILED, failure_reason=str(exc))
 
     async def _run_loop(self) -> LoopResult:
-        context = self.context
-
         # DISCOVER runs once.
         await self._run_stage(self.discover_stage, StageStatus.DISCOVER)
 

@@ -101,7 +101,9 @@ async def list_memories(
         try:
             types = [MemoryType(memory_type)]
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Unknown memory_type: {memory_type}")
+            raise HTTPException(
+                status_code=400, detail=f"Unknown memory_type: {memory_type}"
+            ) from None
     records = await manager.list_by(
         user_id=user_id,
         session_id=session_id,
@@ -132,11 +134,13 @@ async def create_memory(request: Request, body: MemoryCreateRequest) -> dict:
     try:
         mem_type = MemoryType(body.memory_type)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Unknown memory_type: {body.memory_type}")
+        raise HTTPException(
+            status_code=400, detail=f"Unknown memory_type: {body.memory_type}"
+        ) from None
     try:
         source = MemorySource(body.source)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Unknown source: {body.source}")
+        raise HTTPException(status_code=400, detail=f"Unknown source: {body.source}") from None
     record = await manager.add(
         content=body.content,
         memory_type=mem_type,
@@ -174,7 +178,7 @@ async def retrieve(request: Request, body: RetrieveRequest) -> dict:
         try:
             types = [MemoryType(t) for t in body.memory_types]
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=f"Unknown memory_type: {exc}")
+            raise HTTPException(status_code=400, detail=f"Unknown memory_type: {exc}") from exc
     ctx = await manager.retrieve_context(
         body.query,
         user_id=body.user_id,

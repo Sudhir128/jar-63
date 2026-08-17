@@ -7,6 +7,8 @@ cancellation).
 
 from __future__ import annotations
 
+import contextlib
+
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core.logging import get_logger
@@ -229,9 +231,7 @@ async def list_pending_confirmations(request: Request) -> list[ConfirmationRespo
 
 
 @router.post("/confirmations/{confirmation_id}/approve", response_model=ConfirmationResponse)
-async def approve_confirmation(
-    request: Request, confirmation_id: str
-) -> ConfirmationResponse:
+async def approve_confirmation(request: Request, confirmation_id: str) -> ConfirmationResponse:
     """Approve a pending tool confirmation and resume the paused loop."""
     service = _get_loop_service(request)
     approved = await service.approve_confirmation(confirmation_id)
@@ -244,19 +244,17 @@ async def approve_confirmation(
     pending = service._confirmation_store.get(confirmation_id)  # noqa: SLF001
     task_id = pending.task_id if pending else None
     if task_id and service.get_handle(task_id) is not None:
-        try:
+        with contextlib.suppress(
+            ValueError
+        ):  # Loop was not in a pausable state; approval still recorded.
             await service.resume_loop(task_id)
-        except ValueError:
-            pass  # Loop was not in a pausable state; approval still recorded.
     req = service._confirmation_store.get(confirmation_id)  # noqa: SLF001
     data = req.model_dump() if req else {"confirmation_id": confirmation_id, "status": "approved"}
     return _confirmation_response(data)
 
 
 @router.post("/confirmations/{confirmation_id}/reject", response_model=ConfirmationResponse)
-async def reject_confirmation(
-    request: Request, confirmation_id: str
-) -> ConfirmationResponse:
+async def reject_confirmation(request: Request, confirmation_id: str) -> ConfirmationResponse:
     """Reject a pending tool confirmation and resume the loop (tool not executed)."""
     service = _get_loop_service(request)
     rejected = await service.reject_confirmation(confirmation_id)
@@ -268,10 +266,8 @@ async def reject_confirmation(
     pending = service._confirmation_store.get(confirmation_id)  # noqa: SLF001
     task_id = pending.task_id if pending else None
     if task_id and service.get_handle(task_id) is not None:
-        try:
+        with contextlib.suppress(ValueError):
             await service.resume_loop_after_rejection(task_id, reason="rejected by user")
-        except ValueError:
-            pass
     req = service._confirmation_store.get(confirmation_id)  # noqa: SLF001
     data = req.model_dump() if req else {"confirmation_id": confirmation_id, "status": "rejected"}
     return _confirmation_response(data)

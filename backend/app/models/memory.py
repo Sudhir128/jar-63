@@ -26,7 +26,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    Text as SQLText,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -52,9 +51,7 @@ class MemoryModel(Base):
     source: Mapped[str] = mapped_column(String(32), default="system", server_default="system")
     importance: Mapped[float] = mapped_column(Float, default=0.5, server_default="0.5")
     confidence: Mapped[float] = mapped_column(Float, default=0.5, server_default="0.5")
-    retention_policy: Mapped[str] = mapped_column(
-        String(32), default="ttl", server_default="ttl"
-    )
+    retention_policy: Mapped[str] = mapped_column(String(32), default="ttl", server_default="ttl")
     # Embedding stored as a JSON array (works without pgvector).
     embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -63,12 +60,8 @@ class MemoryModel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, index=True
     )
-    last_accessed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now
-    )
-    expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_accessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     access_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict, server_default="{}")
 
