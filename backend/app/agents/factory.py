@@ -34,6 +34,7 @@ from app.agents.research import RESEARCH_AGENT_ID, ResearchAgent
 from app.core.exceptions import AgentDefinitionValidationError
 from app.core.identifiers import generate_id
 from app.core.logging import get_logger
+from app.tools.interface import ToolDecisionContext
 
 if TYPE_CHECKING:
     from app.tools.executor import ToolExecutor
@@ -101,6 +102,17 @@ class GenericAgent(AgentInterface):
 
         from app.tools.executor import ToolCallRecord
 
+        # Propagate agent identity (including whether this is a dynamic agent)
+        # into the ToolExecutor/ToolPolicy. This is what lets the policy decide
+        # HIGH/CRITICAL risk tool calls for dynamic agents — it must never be
+        # derived from the untrusted tool list alone.
+        decision_context = ToolDecisionContext(
+            agent_id=self.agent_id,
+            agent_version=self._definition.version,
+            agent_dynamic=self._definition.dynamic,
+            task_id=context.task_id,
+            session_id=context.session_id,
+        )
         user_input = str(context.input) if context.input is not None else ""
         arguments = {"input": user_input} if user_input else {}
         observations: list[dict] = []
@@ -115,6 +127,7 @@ class GenericAgent(AgentInterface):
                     call,
                     task_id=context.task_id,
                     session_id=context.session_id,
+                    context=decision_context,
                 )
             except Exception as exc:  # noqa: BLE001 - never fabricate; record and continue
                 observations.append({"tool": tool_name, "success": False, "error": str(exc)})

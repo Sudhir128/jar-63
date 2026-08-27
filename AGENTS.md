@@ -278,3 +278,113 @@ agents, tools, voice, memory, Android — do not implement those prematurely.
   Loop Engine's responsibility.
 - **No secret leakage.** LLM events carry provider/model/latency metadata
   only — never prompt contents or completions (verified by e2e test).
+
+
+## Phase 8.1 — Tool Foundation (IMPLEMENTED, NOT YET TEST-VERIFIED)
+
+Status: implementation complete in the working tree; **tests/lint NOT run**
+in this environment because pytest/ruff/pydantic are unavailable and
+auto-install is prohibited. All edited files pass `python -m py_compile`.
+Do NOT mark Phase 8 "done" until `cd backend && APP_ENV=testing pytest` is
+green.
+
+### Known limitation (pre-existing Phase 6) — do NOT treat as a Phase 8.1 failure
+
+The complete backend suite currently reports: **606 passed, 8 skipped,
+3 failed**. All 3 failures are existing **Phase 6 memory** tests, unrelated
+to Phase 8.1:
+
+- `TestWorkingMemory::test_add_and_list`
+- `TestWorkingMemory::test_clear`
+- `TestPhase6Demos::test_all_demos_pass`
+
+Failure mode: `ModuleNotFoundError: No module named 'fakeredis'`. `fakeredis`
+is used by the Phase 6 memory tests/demo but is not currently declared in the
+project's development dependencies. This is a pre-existing Phase 6
+test-environment/dependency gap. It is NOT a Phase 8.1 failure. Phase 8.1
+focused tests pass: **39/39**; Ruff check and format pass. The full suite is
+**not** green — do not claim otherwise.
+
+### Defect fixes applied (after the read-only security/diff review)
+
+1. CRITICAL can never be allowed through `auto_approve` — the CRITICAL
+   deny/allow branch now runs BEFORE the auto_approve branch in
+   `DefaultToolPolicy.evaluate`. The only CRITICAL allow is an explicit,
+   trusted, preconfigured `allow` entry.
+2. Dynamic-agent risk bypass closed on the real execution path:
+   - `GenericAgent.execute` now passes a `ToolDecisionContext` with
+     `agent_dynamic=self._definition.dynamic` into `execute_call`.
+   - `DefaultToolPolicy.evaluate` denies HIGH tools outright for dynamic
+     agents (unless the tool is in the trusted `allow` set) instead of
+     leaving them pending confirmation.
+   - The runtime default policy is now `DefaultToolPolicy()` in
+     `runtime/manager.py`, `loop/service.py`, and the loop execute stage
+     (was `AllowAllToolPolicy()`); deny-by-default now holds at runtime.
+     Built-in tools are all LOW, so Phase 0-7 behavior is unchanged.
+   - `_validate_dynamic_definition` rejects dynamic-agent specs that
+     reference HIGH/CRITICAL registered tools (LLM spec cannot pull risky
+     tools) — independent of `list_available()` (which remains discovery-only).
+3. Oversized output is cleared when it exceeds the cap: `_enforce_output_limit`
+   replaces `result.output` with `{"truncated": True}` and marks the result
+   `partial=True`, `success=False`, `error_type="output_limit_exceeded"`, so
+   the full payload can never reach `result.output`, observations, agent
+   results, or events.
+4. Timeout: the loop no longer passes its per-step budget
+   (`LoopPolicy.per_execution_timeout_seconds`) as the tool timeout; the
+   executor resolves the per-tool timeout from the single authoritative
+   source `ToolSettings.max_execution_time_seconds` (then explicit call
+   timeout, then tool default). `per_execution_timeout_seconds` remains only
+   a loop step/agent budget.
+
+### What was added
+
+- `ToolEnvironment`, `ToolDecisionContext`, `ToolExecutionMetadata` in
+  `app/tools/interface.py`; `ToolInfo` gained `read_only`,
+  `modifies_external_state`, `supported_environments`,
+  `default_timeout_seconds`, `required_capabilities`, `output_schema`;
+  `ToolResult` gained `partial`, `error_type`, `evidence`,
+  `execution_metadata`. All additions are defaulted so Phase 0-7
+  constructions are unchanged. `ToolExecutionMetadata` has
+  `extra="forbid"` (never arguments/output/secrets).
+- `app/tools/sanitize.py`: `sanitize_error()` redacts keyed credentials
+  (`api_key=`/`password=`/`secret=`/`token=`...), `Bearer <tok>`, and long
+  hex/base64 tokens. Used for exception messages and TOOL_CALL_FAILED/obs
+  error payloads.
+- `app/config/tool_settings.py`: `ToolSettings` — the single source of truth
+  for tool limits (`max_execution_time_seconds`, `max_output_size_bytes`,
+  `max_redirects`, `max_downloaded_bytes`, `max_filesystem_file_bytes`),
+  wired into `Settings.tools` + `.env.example` `TOOL_` block.
+- `app/tools/policy.py`: `ToolPolicy.evaluate` + optional `context`; new
+  `ToolPolicy.list_available_for()` (discovery); `DefaultToolPolicy`
+  explicit-CRITICAL-allow now marks `metadata={"explicit": True}`;
+  auto_approve marks `{"explicit": True, "source": "auto_approve"}`.
+- `app/tools/registry.py`: async `ToolRegistry.list_available(policy,
+  context, environments)` gates *discovery* (never enforcement). Dynamic
+  agents (`ToolDecisionContext.agent_dynamic`) never see
+  HIGH/CRITICAL-risk tools in discovery. Publishes `TOOL_DISCOVERED`
+  (metadata-only payload).
+- `app/tools/executor.py`: `execute_call`/`execute_confirmed` now accept
+  `loop_id` + `context`, and `timeout_seconds` is now optional (resolved via
+  `_execution_timeout`: explicit > tool `default_timeout_seconds` >
+  `ToolSettings.max_execution_time_seconds`). `_run_tool` attaches
+  `ToolExecutionMetadata`, enforces the output-size cap (marks partial +
+  failed), and sanitizes failure errors/events. Additions are backward
+  compatible (Phase 0-7 callers unchanged).
+
+### Security invariants
+
+- Discovery (`list_available`) is NEVER the security boundary; the executor
+  independently enforces `ToolPolicy` on every execution.
+- CRITICAL tools are denied by default; only an explicit trusted policy
+  allow (or preconfigured auto_approve) lets them run. Dynamic agents never
+  auto-receive HIGH/CRITICAL in discovery.
+- No argument, prompt, output, or secret is ever placed in execution
+  metadata or tool events.
+
+### Test scope
+
+`backend/tests/test_phase8_1_tool_foundation.py` (~28 tests) covers metadata,
+capability declaration, registry discovery/filtering, executor policy
+enforcement, dynamic-agent HIGH/CRITICAL restrictions, CRITICAL default
+denial, config limits, structured ToolResult/Observation compatibility,
+execution-metadata propagation, event payload safety, and secret redaction.

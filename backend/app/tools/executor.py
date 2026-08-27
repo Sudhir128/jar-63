@@ -31,12 +31,22 @@ import anyio
 from jsonschema import ValidationError as JSONSchemaValidationError
 from jsonschema import validate as validate_schema
 
+from app.config.tool_settings import ToolSettings
+from app.core.identifiers import utc_now
 from app.core.logging import get_logger
 from app.events import Event, EventBus, EventType
 from app.tools.confirmation import ConfirmationRequest, ConfirmationStore
-from app.tools.interface import ToolContext, ToolInfo, ToolInterface, ToolResult
-from app.tools.policy import PolicyDecision, ToolPolicy
+from app.tools.interface import (
+    ToolContext,
+    ToolDecisionContext,
+    ToolExecutionMetadata,
+    ToolInfo,
+    ToolInterface,
+    ToolResult,
+)
+from app.tools.policy import PolicyDecision, PolicyVerdict, ToolPolicy
 from app.tools.registry import ToolRegistry
+from app.tools.sanitize import sanitize_error
 
 if TYPE_CHECKING:
     from app.runtime.loop.observation import Observation
@@ -106,8 +116,30 @@ class ToolExecutor:
     policy: ToolPolicy
     confirmation_store: ConfirmationStore = field(default_factory=ConfirmationStore)
     event_bus: EventBus | None = None
+    limits: ToolSettings | None = None
     # Tracks repeated identical calls per task for loop protection.
     _call_history: dict[str, list[ToolCallRecord]] = field(default_factory=dict)
+
+    @property
+    def effective_limits(self) -> ToolSettings:
+        """Return the resource limits (single source of truth).
+
+        Falls back to :class:`ToolSettings` defaults when not injected, so
+        there is never a second, independently-configurable copy of a limit.
+        """
+        if self.limits is None:
+            from app.config import get_settings
+
+            return get_settings().tools
+        return self.limits
+
+    def _execution_timeout(self, info: ToolInfo, explicit: float | None) -> float:
+        """Resolve the timeout for a tool call: explicit > tool default > limit."""
+        if explicit is not None:
+            return explicit
+        if info.default_timeout_seconds is not None:
+            return info.default_timeout_seconds
+        return self.effective_limits.max_execution_time_seconds
 
     async def execute_call(
         self,
@@ -116,7 +148,9 @@ class ToolExecutor:
         task_id: str | None = None,
         session_id: str | None = None,
         iteration: int = 0,
-        timeout_seconds: float = 60.0,
+        timeout_seconds: float | None = None,
+        loop_id: str | None = None,
+        context: ToolDecisionContext | None = None,
     ) -> ToolExecutionOutcome:
         """Execute a single tool call through the full controlled pipeline."""
         await self._publish(EventType.TOOL_CALL_REQUESTED, call, task_id, session_id, iteration)
@@ -152,6 +186,7 @@ class ToolExecutor:
             arguments=call.arguments,
             task_id=task_id,
             session_id=session_id,
+            context=context,
         )
         if decision.denied:
             obs = _observation_cls().from_denial(
@@ -219,7 +254,7 @@ class ToolExecutor:
                 skipped_reason=decision.reason,
             )
 
-        # 4. Execute the tool (with timeout).
+        # 4. Execute the tool (with resolved timeout).
         return await self._run_tool(
             tool,
             info,
@@ -227,7 +262,10 @@ class ToolExecutor:
             task_id=task_id,
             session_id=session_id,
             iteration=iteration,
-            timeout_seconds=timeout_seconds,
+            loop_id=loop_id,
+            context=context,
+            decision=decision,
+            timeout_seconds=self._execution_timeout(info, timeout_seconds),
         )
 
     async def execute_confirmed(
@@ -237,7 +275,9 @@ class ToolExecutor:
         task_id: str | None = None,
         session_id: str | None = None,
         iteration: int = 0,
-        timeout_seconds: float = 60.0,
+        timeout_seconds: float | None = None,
+        loop_id: str | None = None,
+        context: ToolDecisionContext | None = None,
     ) -> ToolExecutionOutcome:
         """Execute a tool call that was previously held for confirmation.
 
@@ -279,7 +319,9 @@ class ToolExecutor:
             task_id=task_id,
             session_id=session_id,
             iteration=iteration,
-            timeout_seconds=timeout_seconds,
+            loop_id=loop_id,
+            context=context,
+            timeout_seconds=self._execution_timeout(tool.info, timeout_seconds),
         )
 
     def record_call(self, task_id: str, call: ToolCallRecord) -> None:
@@ -305,6 +347,9 @@ class ToolExecutor:
         session_id: str | None,
         iteration: int,
         timeout_seconds: float,
+        loop_id: str | None = None,
+        context: ToolDecisionContext | None = None,
+        decision: PolicyDecision | None = None,
     ) -> ToolExecutionOutcome:
         await self._publish(
             EventType.TOOL_CALL_STARTED,
@@ -318,19 +363,20 @@ class ToolExecutor:
             task_id=task_id,
             session_id=session_id,
             arguments=dict(call.arguments),
-            metadata={"iteration": iteration},
+            metadata={"iteration": iteration, "loop_id": loop_id},
         )
         started = time.monotonic()
         try:
             with anyio.fail_after(timeout_seconds):
                 result: ToolResult = await tool.execute(ctx)
-        except TimeoutError as exc:
+        except TimeoutError:
             result = ToolResult(
                 invocation_id=ctx.invocation_id,
                 tool_call_id=call.tool_call_id,
                 name=call.tool_name,
                 success=False,
-                error=f"Tool timed out: {exc}",
+                error_type="timeout",
+                error="Tool timed out.",
                 execution_time_ms=int((time.monotonic() - started) * 1000),
             )
         except Exception as exc:  # noqa: BLE001 - normalize all tool failures
@@ -339,7 +385,8 @@ class ToolExecutor:
                 tool_call_id=call.tool_call_id,
                 name=call.tool_name,
                 success=False,
-                error=str(exc),
+                error_type=type(exc).__name__,
+                error=sanitize_error(str(exc)),
                 execution_time_ms=int((time.monotonic() - started) * 1000),
             )
 
@@ -350,14 +397,33 @@ class ToolExecutor:
         if result.tool_call_id is None:
             result = result.model_copy(update={"tool_call_id": call.tool_call_id})
 
+        # Enforce limits first so the execution metadata reflects final success.
+        result = self._enforce_output_limit(result, info)
+
+        verdict = self._verbatim_verdict_for(decision)
+        result = await self._attach_execution_metadata(
+            result,
+            info=info,
+            call=call,
+            task_id=task_id,
+            session_id=session_id,
+            iteration=iteration,
+            loop_id=loop_id,
+            context=context,
+            verdict=verdict,
+            reason=decision.reason if decision else "",
+        )
+
         event_type = EventType.TOOL_CALL_COMPLETED if result.success else EventType.TOOL_CALL_FAILED
+        # Failure events carry only the *sanitized* error.
+        safe_error = sanitize_error(result.error) if result.error else None
         await self._publish(
             event_type,
             call,
             task_id,
             session_id,
             iteration,
-            extra={"success": result.success, "error": result.error},
+            extra={"success": result.success, "error": safe_error},
         )
 
         obs = _observation_cls().from_tool_result(
@@ -368,10 +434,92 @@ class ToolExecutor:
             task_id=task_id,
             session_id=session_id,
             iteration=iteration,
-            error=result.error,
+            error=sanitize_error(result.error) if result.error else None,
         )
         await self._publish_observation(obs, task_id, session_id, iteration)
-        return ToolExecutionOutcome(result=result, observation=obs)
+        return ToolExecutionOutcome(result=result, observation=obs, decision=decision)
+
+    @staticmethod
+    def _verbatim_verdict_for(decision: PolicyDecision | None) -> str:
+        """Normalize a verdict to a short string for execution metadata."""
+        if decision is None:
+            return PolicyVerdict.ALLOW.value
+        return decision.verdict.value
+
+    async def _attach_execution_metadata(
+        self,
+        result: ToolResult,
+        *,
+        info: ToolInfo,
+        call: ToolCallRecord,
+        task_id: str | None,
+        session_id: str | None,
+        iteration: int,
+        loop_id: str | None,
+        context: ToolDecisionContext | None,
+        verdict: str,
+        reason: str,
+    ) -> ToolResult:
+        """Attach safe execution metadata (never arguments/output/secrets)."""
+        from app.core.identifiers import generate_id
+
+        earlier = result.execution_metadata
+        ended = utc_now()
+        duration_ms = result.execution_time_ms if result.execution_time_ms is not None else None
+        agent_id = context.agent_id if context else None
+        agent_version = context.agent_version if context else None
+        metadata = ToolExecutionMetadata(
+            execution_id=earlier.execution_id if earlier else generate_id("texec"),
+            tool=call.tool_name,
+            tool_call_id=call.tool_call_id,
+            task_id=task_id,
+            session_id=session_id,
+            loop_id=loop_id,
+            iteration=iteration,
+            agent_id=agent_id,
+            agent_version=agent_version,
+            risk=info.risk_level,
+            policy_verdict=verdict,
+            policy_reason=reason,
+            started_at=None,
+            ended_at=ended,
+            duration_ms=duration_ms,
+            success=result.success,
+        )
+        return result.model_copy(update={"execution_metadata": metadata})
+
+    def _enforce_output_limit(self, result: ToolResult, info: ToolInfo) -> ToolResult:
+        """Mark results that exceed the configured output-size cap as failures.
+
+        The serialized size is a soft estimate; the configured limit is the
+        *single source of truth* for output bounds. When the cap is exceeded
+        the oversized output is cleared (replaced with a bounded marker) so the
+        full payload can never reach callers, agent results, observations, or
+        events — only the safe error classification survives.
+        """
+        if result.output is None or result.output is False or result.output == 0:
+            return result
+        try:
+            import json
+
+            size = len(json.dumps(result.output, default=str))
+        except (TypeError, ValueError):
+            size = len(str(result.output))
+        if size > self.effective_limits.max_output_size_bytes:
+            return result.model_copy(
+                update={
+                    "success": False,
+                    "partial": True,
+                    "error_type": "output_limit_exceeded",
+                    "output": {"truncated": True},
+                    "error": (
+                        f"Tool output exceeded limit "
+                        f"({self.effective_limits.max_output_size_bytes} bytes); "
+                        f"output truncated."
+                    ),
+                }
+            )
+        return result
 
     def _skip(
         self,

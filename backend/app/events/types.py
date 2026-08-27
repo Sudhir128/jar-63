@@ -68,6 +68,10 @@ class EventType(StrEnum):
 
     # --- Tool execution events (Phase 3) ---
     TOOL_CALL_REQUESTED = "tool.call.requested"
+    # --- Tool ecosystem events (Phase 8.1) ---
+    # Discovery payloads carry only tool identity/category/risk + correlation
+    # ids — never arguments, prompts, output, or secrets.
+    TOOL_DISCOVERED = "tool.discovered"
     TOOL_CALL_STARTED = "tool.call.started"
     TOOL_CALL_COMPLETED = "tool.call.completed"
     TOOL_CALL_FAILED = "tool.call.failed"

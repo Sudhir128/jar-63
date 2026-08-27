@@ -419,15 +419,28 @@ def _validate_dynamic_definition(definition: AgentDefinition, tools: ToolRegistr
     if definition.risk is RiskLevel.CRITICAL:
         raise AgentDefinitionValidationError("CRITICAL-risk dynamic agents are never allowed")
     # All required tools must already be registered.
-    for name in definition.required_tools:
+    referenced = set(definition.required_tools) | set(definition.preferred_tools)
+    for name in referenced:
         if not tools.exists(name):
             raise AgentDefinitionValidationError(f"required tool '{name}' is not registered")
-    bad = _FORBIDDEN_TOOL_NAMES.intersection(
-        set(definition.required_tools) | set(definition.preferred_tools)
-    )
+    bad = _FORBIDDEN_TOOL_NAMES.intersection(referenced)
     if bad:
         raise AgentDefinitionValidationError(
             f"dynamic agent references unrestricted tool(s): {sorted(bad)}"
+        )
+    # Dynamic agents must never auto-receive HIGH- or CRITICAL-risk tools via an
+    # LLM-generated specification. The only way a dynamic agent may run such a
+    # tool is a trusted, preconfigured policy pointing at it explicitly — which
+    # cannot be introduced by the LLM spec, so we reject references outright.
+    high_critical = [
+        name
+        for name in referenced
+        if tools.exists(name)
+        and tools.get(name).info.risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
+    ]
+    if high_critical:
+        raise AgentDefinitionValidationError(
+            f"dynamic agent references HIGH/CRITICAL risk tool(s): {sorted(high_critical)}"
         )
     lowered = definition.instructions.lower()
     if any(tok in lowered for tok in _FORBIDDEN_INSTRUCTION_TOKENS):

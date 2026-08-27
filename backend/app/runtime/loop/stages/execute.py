@@ -37,7 +37,7 @@ from app.runtime.loop.loop_state import (
 from app.runtime.loop.stages.base import LoopStage
 from app.tools.executor import ToolCallRecord, ToolExecutionOutcome, ToolExecutor
 from app.tools.interface import ToolContext, ToolResult
-from app.tools.policy import AllowAllToolPolicy, ToolPolicy
+from app.tools.policy import DefaultToolPolicy, ToolPolicy
 
 logger = get_logger("loop.execute")
 
@@ -88,7 +88,7 @@ class DefaultExecuteStage(ExecuteStage):
         tool_policy: ToolPolicy | None = None,
     ) -> None:
         self._tool_executor = tool_executor
-        self._tool_policy = tool_policy or AllowAllToolPolicy()
+        self._tool_policy = tool_policy or DefaultToolPolicy()
 
     async def execute(self, context: LoopContext) -> ExecutionResult:
         # Honour cancellation before starting any work.
@@ -263,12 +263,14 @@ class DefaultExecuteStage(ExecuteStage):
                 ),
             )
 
+        # The per-tool timeout is resolved by the executor from the single
+        # authoritative source (ToolSettings.max_execution_time_seconds, then a
+        # tool-specific default) — NOT from the loop's per-step budget.
         outcome: ToolExecutionOutcome = await self._tool_executor.execute_call(
             call,
             task_id=context.task_id,
             session_id=context.session_id,
             iteration=context.state.iteration_count,
-            timeout_seconds=context.policy.per_execution_timeout_seconds,
         )
 
         # Record the observation into loop state.
@@ -327,7 +329,6 @@ class DefaultExecuteStage(ExecuteStage):
             task_id=context.task_id,
             session_id=context.session_id,
             iteration=context.state.iteration_count,
-            timeout_seconds=context.policy.per_execution_timeout_seconds,
         )
         obs = outcome.observation
         state = context.state

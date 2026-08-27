@@ -11,6 +11,7 @@ from app.config.settings import (
     RedisSettings,
     SecuritySettings,
     Settings,
+    ToolSettings,
     get_settings,
 )
 
@@ -25,5 +26,6 @@ __all__ = [
     "RedisSettings",
     "SecuritySettings",
     "Settings",
+    "ToolSettings",
     "get_settings",
 ]

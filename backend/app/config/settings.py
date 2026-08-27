@@ -23,6 +23,7 @@ from app.config.logging_settings import LoggingSettings
 from app.config.memory_settings import MemorySettings
 from app.config.redis_settings import RedisSettings
 from app.config.security_settings import SecuritySettings
+from app.config.tool_settings import ToolSettings
 
 __all__ = [
     "AgentSettings",
@@ -34,6 +35,7 @@ __all__ = [
     "MemorySettings",
     "RedisSettings",
     "SecuritySettings",
+    "ToolSettings",
     "Settings",
     "get_settings",
 ]
@@ -52,6 +54,7 @@ class Settings(BaseModel):
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     agents: AgentSettings = Field(default_factory=AgentSettings)
+    tools: ToolSettings = Field(default_factory=ToolSettings)
 
     @property
     def is_testing(self) -> bool:
@@ -70,4 +73,5 @@ def get_settings() -> Settings:
         security=SecuritySettings(),
         logging=LoggingSettings(),
         agents=AgentSettings(),
+        tools=ToolSettings(),
     )

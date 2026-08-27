@@ -46,7 +46,7 @@ from app.runtime.session_manager import SessionManager
 from app.runtime.task_manager import TaskManager
 from app.tools.confirmation import ConfirmationRequest, ConfirmationStore
 from app.tools.executor import ToolExecutor
-from app.tools.policy import AllowAllToolPolicy, ToolPolicy
+from app.tools.policy import DefaultToolPolicy, ToolPolicy
 from app.tools.registry import ToolRegistry
 
 logger = get_logger("loop.service")
@@ -94,7 +94,7 @@ class LoopService:
         self.event_bus = event_bus
         self.session_manager = session_manager
         self.settings = settings or get_settings()
-        self.tool_policy = tool_policy or AllowAllToolPolicy()
+        self.tool_policy = tool_policy or DefaultToolPolicy()
         self.llm_planner = llm_planner
         self.memory_manager = memory_manager
         self._confirmation_store = ConfirmationStore()

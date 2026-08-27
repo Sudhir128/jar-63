@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from app.tools.interface import RiskLevel, ToolInfo
+from app.tools.interface import RiskLevel, ToolDecisionContext, ToolInfo
 
 __all__ = [
     "PolicyDecision",
@@ -65,8 +65,17 @@ class PolicyDecision:
         return self.verdict is PolicyVerdict.REQUIRE_CONFIRMATION
 
     @classmethod
-    def allow(cls, reason: str = "allowed by policy") -> PolicyDecision:
-        return cls(verdict=PolicyVerdict.ALLOW, reason=reason)
+    def allow(
+        cls,
+        reason: str = "allowed by policy",
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> PolicyDecision:
+        return cls(
+            verdict=PolicyVerdict.ALLOW,
+            reason=reason,
+            metadata=dict(metadata) if metadata else {},
+        )
 
     @classmethod
     def deny(cls, reason: str, *, detail: str | None = None) -> PolicyDecision:
@@ -83,6 +92,10 @@ class ToolPolicy:
     A policy evaluates a tool call (identified by its :class:`ToolInfo` and
     arguments) in the context of the current task/session and returns a
     :class:`PolicyDecision`.
+
+    ``context`` (an optional :class:`ToolDecisionContext`) supplies safe
+    identity/capability facts for *future* policy decisions; it is accepted
+    now so every implementations can stay signature-compatible.
     """
 
     def evaluate(
@@ -93,8 +106,19 @@ class ToolPolicy:
         task_id: str | None = None,
         session_id: str | None = None,
         privacy: str = "public",
+        context: ToolDecisionContext | None = None,
     ) -> PolicyDecision:
         raise NotImplementedError
+
+    def list_available_for(
+        self, infos: list[ToolInfo], context: ToolDecisionContext | None = None
+    ) -> list[ToolInfo]:
+        """Return the subset of tool infos available under this policy.
+
+        This is a *discovery* helper used by the registry — the final security
+        boundary is enforcement time :meth:`evaluate` on every execution.
+        """
+        return [i for i in infos if self.evaluate(i, context=context).allowed]
 
 
 class AllowAllToolPolicy(ToolPolicy):
@@ -104,7 +128,12 @@ class AllowAllToolPolicy(ToolPolicy):
     (direct tool execution without policy checks) is preserved.
     """
 
-    def evaluate(self, info: ToolInfo, **_: Any) -> PolicyDecision:
+    def evaluate(
+        self,
+        info: ToolInfo,
+        context: ToolDecisionContext | None = None,
+        **_: Any,
+    ) -> PolicyDecision:
         return PolicyDecision.allow(reason="allow-all policy")
 
 
@@ -148,6 +177,7 @@ class DefaultToolPolicy(ToolPolicy):
         task_id: str | None = None,
         session_id: str | None = None,
         privacy: str = "public",
+        context: ToolDecisionContext | None = None,
     ) -> PolicyDecision:
         name = info.name
 
@@ -162,13 +192,40 @@ class DefaultToolPolicy(ToolPolicy):
                 detail="network disabled",
             )
 
-        if name in self._auto_approve:
-            return PolicyDecision.allow(reason=f"Tool '{name}' auto-approved by policy.")
-
-        if info.risk_level is RiskLevel.CRITICAL and name not in self._allow:
+        # CRITICAL is never auto-approved. The ONLY supported way to allow a
+        # CRITICAL tool is an explicit, trusted, preconfigured allow rule.
+        # This branch must be evaluated BEFORE the auto_approve branch so
+        # auto_approve can never convert a CRITICAL deny into an allow.
+        if info.risk_level is RiskLevel.CRITICAL:
+            if name in self._allow:
+                return PolicyDecision.allow(
+                    f"Tool '{name}' explicitly allowed by policy.",
+                    metadata={"explicit": True, "source": "allow_list"},
+                )
             return PolicyDecision.deny(
                 f"Tool '{name}' is CRITICAL risk and not explicitly allowed.",
                 detail="critical risk denied",
+            )
+
+        if name in self._auto_approve:
+            return PolicyDecision.allow(
+                f"Tool '{name}' auto-approved by policy.",
+                metadata={"explicit": True, "source": "auto_approve"},
+            )
+
+        # Dynamic agents must never auto-receive HIGH-risk tools. A HIGH tool
+        # is denied outright for a dynamic agent unless a trusted, preconfigured
+        # policy explicitly allows it (it is never merely "pending confirmation"
+        # for a dynamic agent).
+        if (
+            context is not None
+            and context.agent_dynamic
+            and info.risk_level is RiskLevel.HIGH
+            and name not in self._allow
+        ):
+            return PolicyDecision.deny(
+                f"Tool '{name}' is HIGH risk and not allowed for dynamic agents.",
+                detail="dynamic agent high risk denied",
             )
 
         if info.risk_level is RiskLevel.HIGH:

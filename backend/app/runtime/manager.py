@@ -37,7 +37,7 @@ from app.runtime.session_manager import SessionManager
 from app.runtime.task_manager import TaskManager
 from app.runtime.workflow_manager import DefaultWorkflowManager, WorkflowManager
 from app.tools.impl import DEFAULT_TOOLS
-from app.tools.policy import AllowAllToolPolicy
+from app.tools.policy import DefaultToolPolicy
 from app.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
@@ -136,7 +136,7 @@ class RuntimeManager:
                 event_bus=self.event_bus,
                 session_manager=self.session_manager,
                 settings=self.settings,
-                tool_policy=AllowAllToolPolicy(),
+                tool_policy=DefaultToolPolicy(),
                 llm_planner=self.llm_planner,
                 memory_manager=self.memory_manager,
             )
